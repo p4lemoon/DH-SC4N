@@ -204,7 +204,9 @@ def run_scan() -> None:
             dosnap=cfg["snapshots"],
             threads=cfg["threads"],
             notify=cfg["send"],
-            status_callback=on_found
+            status_callback=on_found,
+            make_import_file=cfg.get("make_import_file", True),
+            max_entries=cfg.get("max_entries", 64)
         )
         con.print(f"\n[bold green]сканирование завершено, удалось найти {len(results)} устройств[/bold green]")
         if results:

