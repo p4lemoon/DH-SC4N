@@ -114,11 +114,11 @@ DEVICE_CATEGORIES = {
 logger = logging.getLogger("dahua")
 
 class DahuaController:
-    def __init__(self, ip, port, login, password):
+    def __init__(self, ip, port, login, password, timeout: float = TIMEOUT):
         self.serial = ''
         self.channels_count = -1
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.settimeout(TIMEOUT)
+        self.socket.settimeout(timeout)
         try:
             self.socket.connect((ip, port))
             login_bytes = login.encode('ascii', errors='ignore')[:32]

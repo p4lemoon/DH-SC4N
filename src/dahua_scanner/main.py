@@ -36,18 +36,31 @@ def print_logo() -> None:
     print()
 
 
-# состояние или конфиг неебу  крч
+# сопоставление ключей меню с полями Config
+CFG_CONFIG_MAP = {
+    "token": "bot_token",
+    "chat_id": "userid",
+    "endpoint": "tg_endpoint",
+    "send": "send_tg",
+    "target_file": "target_file",
+    "threads": "threads",
+    "timeout": "timeout",
+    "snapshots": "snapshots",
+    "make_import_file": "make_import_file",
+    "max_entries": "max_entries"
+}
+
 cfg = {
-    "target_file": "input.txt",
+    "target_file": config.target_file,
     "token": config.bot_token,
-    "chat_id": config.userid,
+    "chat_id": str(config.userid),
     "endpoint": config.tg_endpoint,
-    "send": True,
-    "threads": 100,
-    "timeout": 500,
-    "snapshots": True,
-    "make_import_file": True,
-    "max_entries": 64
+    "send": config.send_tg,
+    "threads": config.threads,
+    "timeout": config.timeout,
+    "snapshots": config.snapshots,
+    "make_import_file": config.make_import_file,
+    "max_entries": config.max_entries
 }
 
 SECTIONS = [
@@ -80,7 +93,10 @@ def show_value(key, kind) -> str:
         return "<run>"
     v = cfg.get(key, "")
     if key == "token" and v:
-        return "protected" if len(str(v)) > 8 else "***"
+        s = str(v)
+        return s[:6] + "..." + s[-4:] if len(s) > 10 else "protected"
+    if kind == "bool":
+        return "[green]да[/green]" if v else "[red]нет[/red]"
     return str(v) if v != "" else "<not set>"
 
 
@@ -155,7 +171,6 @@ def create_app() -> Application:
     )
 
 
-# сама логика жтой дрочи
 def func_test():
     token = str(cfg.get("token", "")).strip()
     chat_id = str(cfg.get("chat_id", "")).strip()
@@ -163,9 +178,10 @@ def func_test():
         con.print("\n[yellow]укажи token и chat_id[/yellow]")
         return
 
-    con.print("\n[cyan]отправляю тестовое сообщение в телеграм[/cyan]")
+    endpoint = config.clean_tg_endpoint
+    con.print(f"\n[cyan]отправляю тестовое сообщение в телеграм через {endpoint}...[/cyan]")
     try:
-        url = f"https://{config.tg_endpoint}/bot{token}/sendPhoto"
+        url = f"https://{endpoint}/bot{token}/sendPhoto"
         resp = requests.post(
             url,
             data={
@@ -193,7 +209,16 @@ def run_scan() -> None:
         return
 
     con.print(f"\n[bold cyan]запуск скана![/bold cyan]")
-    con.print(f"цели: [green]{target_file}[/green] | потоки: [green]{cfg['threads']}[/green] | снимки: [green]{cfg['snapshots']}[/green] | кидать в тг?: [green]{cfg['send']}[/green]\n")
+    con.print(
+        f"цели: [green]{target_file}[/green] | "
+        f"потоки: [green]{cfg['threads']}[/green] | "
+        f"таймаут: [green]{cfg['timeout']} ms[/green] | "
+        f"снимки: [green]{'да' if cfg['snapshots'] else 'нет'}[/green] | "
+        f"кидать в тг?: [green]{'да' if cfg['send'] else 'нет'}[/green]\n"
+    )
+
+    if cfg["send"] and (not cfg["token"] or not cfg["chat_id"]):
+        con.print("[yellow]Внимание: оповещения в ТГ включены, но token или chat_id не заполнены![/yellow]\n")
 
     def on_found(device):
         ip, port, login, password = device[:4]
@@ -204,10 +229,11 @@ def run_scan() -> None:
     try:
         results = scanner.brute(
             token=cfg["token"] if cfg["send"] else None,
-            id=cfg["chat_id"] if cfg["send"] else None,
+            userid=cfg["chat_id"] if cfg["send"] else None,
             brute_file_path=target_file,
             dosnap=cfg["snapshots"],
             threads=cfg["threads"],
+            timeout=cfg["timeout"],
             notify=cfg["send"],
             status_callback=on_found,
             make_import_file=cfg.get("make_import_file", True),
@@ -215,12 +241,14 @@ def run_scan() -> None:
         )
         con.print(f"\n[bold green]сканирование завершено, удалось найти {len(results)} устройств[/bold green]")
         if results:
-            con.print("[cyan]список найденных устройств сохранён в found_devices.txt[/cyan]")
-            if cfg.get("make_import_file", True):
-                from . import save_to_xml
-                saved_xmls = save_to_xml.save_xml(results, max_xml_entries=cfg.get("max_entries", 64))
-                if saved_xmls:
-                    con.print(f"[bold cyan]файлы для импорта в SmartPSS созданы [/bold cyan] {', '.join(saved_xmls)}")
+            if scanner.last_report_dir:
+                con.print(f"[cyan]папка с отчётом:[/] [bold green]{scanner.last_report_dir}[/bold green]")
+                report_txt = scanner.last_report_dir / "found_devices.txt"
+                if report_txt.exists():
+                    con.print(f"[cyan]список устройств этого скана:[/] {report_txt}")
+            con.print(f"[cyan]общий список обновлён в:[/] {scanner.FOUND_DEVICES_FILE}")
+            if scanner.last_xml_files:
+                con.print(f"[bold cyan]файлы импорта для SmartPSS:[/] {', '.join(scanner.last_xml_files)}")
     except Exception as e:
         con.print(f"\n[bold red]ошибочка во время сканирования: {e}[/bold red]")
 
@@ -230,6 +258,10 @@ def run_scan() -> None:
 def edit(key, kind) -> None:
     if kind == "bool":
         cfg[key] = not cfg[key]
+        attr = CFG_CONFIG_MAP.get(key)
+        if attr and hasattr(config, attr):
+            setattr(config, attr, cfg[key])
+            config.save()
         return
 
     if kind == "func":
@@ -243,18 +275,18 @@ def edit(key, kind) -> None:
 
     while True:
         val = prompt(f"{key}: ", default=str(cfg.get(key, "")))
-        if kind == "int" and not val.isdigit():
-            con.print("[red]это не число[/red]")
-            continue
-        cfg[key] = int(val) if kind == "int" else val
-        if key == "token":
-            config.bot_token = val
-            config.save()
-        elif key == "chat_id":
-            config.userid = val
-            config.save()
-        elif key == "endpoint":
-            config.tg_endpoint = val
+        if kind == "int":
+            if not val.isdigit():
+                con.print("[red]это не число[/red]")
+                continue
+            new_val = int(val)
+        else:
+            new_val = val
+
+        cfg[key] = new_val
+        attr = CFG_CONFIG_MAP.get(key)
+        if attr and hasattr(config, attr):
+            setattr(config, attr, new_val)
             config.save()
         return
 

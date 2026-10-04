@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ElTree
 from pathlib import Path
+from datetime import datetime
 
 
-def save_xml(results: list, max_xml_entries: int = 64, reports_folder: str = "reports") -> list[str]:
+def save_xml(results: list, max_xml_entries: int = 64, folder: Path | str = Path("reports")) -> list[str]:
     if not results:
         return []
 
-    folder = Path(reports_folder)
+    folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
 
     max_entries = max(1, int(max_xml_entries))
