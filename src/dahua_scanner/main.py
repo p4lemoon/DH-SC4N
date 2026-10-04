@@ -12,6 +12,7 @@ import requests
 from . import get_logo
 from . import palette
 from . import scanner
+from .config import config
 from tqdm import tqdm
 
 # визуалы
@@ -38,8 +39,9 @@ def print_logo() -> None:
 # состояние или конфиг неебу  крч
 cfg = {
     "target_file": "input.txt",
-    "token": "",
-    "chat_id": "",
+    "token": config.bot_token,
+    "chat_id": config.userid,
+    "endpoint": config.tg_endpoint,
     "send": True,
     "threads": 100,
     "timeout": 500,
@@ -50,12 +52,13 @@ cfg = {
 
 SECTIONS = [
     (f"[{ACCENT2}]1.[/] бот", [
-        ("token", "token", "str"),
-        ("chat_id", "chat id", "str"),
+        ("token", "токен", "str"),
+        ("chat_id", "твой айди", "str"),
+        ("endpoint", "кастомное тг зеркало", "str"),
         ("send", "оповещать?", "bool"),
         ("test", "тестовое сообщение", "func"),
     ]),
-    (f"[{ACCENT2}]2.[/] scanner", [
+    (f"[{ACCENT2}]2.[/] сканнер", [
         ("target_file", "файл с целями", "str"),
         ("threads", "потоки", "int"),
         ("timeout", "таймаут (ms)", "int"),
@@ -162,7 +165,7 @@ def func_test():
 
     con.print("\n[cyan]отправляю тестовое сообщение в телеграм[/cyan]")
     try:
-        url = f"https://api.telegram.org/bot{token}/sendPhoto"
+        url = f"https://{config.tg_endpoint}/bot{token}/sendPhoto"
         resp = requests.post(
             url,
             data={
@@ -244,6 +247,15 @@ def edit(key, kind) -> None:
             con.print("[red]это не число[/red]")
             continue
         cfg[key] = int(val) if kind == "int" else val
+        if key == "token":
+            config.bot_token = val
+            config.save()
+        elif key == "chat_id":
+            config.userid = val
+            config.save()
+        elif key == "endpoint":
+            config.tg_endpoint = val
+            config.save()
         return
 
 

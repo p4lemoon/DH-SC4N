@@ -68,6 +68,37 @@
 | 📄 | **Поддержка Masscan** | Принимает сырой вывод masscan — текстовый и JSON-форматы |
 | ⚡ | **Многопоточность** | Настраиваемое количество воркеров и таймаутов |
 | 🎨 | **Интерактивный TUI** | Красивое терминальное меню на `rich` + `prompt_toolkit` с рандомной цветовой темой |
+| 🛜 | **Свое зеркало Telegram** | Возможность указать свое "зеркало" для Telegram в случае региональных блокировок <sup><a href="#возможности">см. подробнее</a></sup>|
+
+<p align="right">(<a href="#readme-top">вернуться наверх</a>)</p>
+
+## ‼️ Свое зеркало для Telegram
+В связи с блокировками Telegram API средствами ТСПУ мною было принято решение ввести в инструмент возможность указывать свое "зеркало".
+
+### Как его получить?
+Получить его можно бесплатно, благодаря сервису <b><a href="https://deno.com/deploy">Deno Deploy.</a></b>
+
+1. Регистрируйся на сайте через GitHub.
+2. Нажимай на **New Playground**.
+3. Очищай ```main.ts``` и вставляй код:
+```typescript
+Deno.serve(async (req) => {
+      const url = new URL(req.url);
+      url.host = "api.telegram.org";
+      url.protocol = "https:";
+      url.port = "";
+
+      return await fetch(url.toString(), {
+        method: req.method,
+        headers: req.headers,
+        body: req.body,
+      });                                           
+    });
+```
+4. Нажимай **Deploy**.
+5. Копируй ссылку на зеркало и вставляй ссылку в ```[ кастомное тг зеркало ]```.
+
+<div align="center"><h3>Теперь все запросы к Telegram API будут идти через серверы сервиса.</h3></div>
 
 <p align="right">(<a href="#readme-top">вернуться наверх</a>)</p>
 
@@ -85,19 +116,24 @@
 
 [uv](https://docs.astral.sh/uv/) — современный быстрый менеджер пакетов Python. Устанавливает зависимости из `uv.lock`, гарантируя воспроизводимость.
 
+
+1. Установка uv (если ещё нет)
 ```sh
-# 1. Установка uv (если ещё нет)
 # Windows (PowerShell):
 irm https://astral.sh/uv/install.ps1 | iex
 
 # Linux / macOS:
 curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-# 2. Клонировать репозиторий
+2. Клонировать репозиторий
+```
 git clone https://github.com/p4lemoon/DH-SC4N.git
 cd DH-SC4N
+```
 
-# 3. Установить зависимости (виртуальное окружение создаётся автоматически)
+3. Установить зависимости (виртуальное окружение создаётся автоматически)
+```
 uv sync
 ```
 

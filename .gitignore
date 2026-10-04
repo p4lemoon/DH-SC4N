@@ -26,6 +26,7 @@ found_devices.txt
 *.log
 *.xml
 input.txt
+config.json
 
 # OS-specific
 .DS_Store
