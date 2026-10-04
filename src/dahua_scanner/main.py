@@ -36,7 +36,6 @@ def print_logo() -> None:
     print()
 
 
-# сопоставление ключей меню с полями Config
 CFG_CONFIG_MAP = {
     "token": "bot_token",
     "chat_id": "userid",
@@ -218,13 +217,13 @@ def run_scan() -> None:
     )
 
     if cfg["send"] and (not cfg["token"] or not cfg["chat_id"]):
-        con.print("[yellow]Внимание: оповещения в ТГ включены, но token или chat_id не заполнены![/yellow]\n")
+        con.print("[yellow]оповещения в ТГ включены, но token или chat_id не заполнены[/yellow]\n")
 
     def on_found(device):
         ip, port, login, password = device[:4]
         model = device[4] if len(device) > 4 and device[4] else ""
         model_str = f" \033[1;36m[{model}]\033[0m" if model else ""
-        tqdm.write(f"\033[1;32mопа, нашел: {ip}:{port} -> {login}:{password}\033[0m{model_str}")
+        tqdm.write(f"\033[1;32mнашел: {ip}:{port} -> {login}:{password}\033[0m{model_str}")
 
     try:
         results = scanner.brute(

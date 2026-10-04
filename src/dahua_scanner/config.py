@@ -18,13 +18,11 @@ def get_config_file() -> Path:
 
 @dataclass
 class Config:
-    # Telegram Bot
     tg_endpoint: str = "epic-scorpion-2212.p4lemoon.deno.net"
     bot_token: str = ""
     userid: str = ""
     send_tg: bool = True
 
-    # Scanner Settings
     target_file: str = "input.txt"
     threads: int = 100
     timeout: int = 1000
@@ -75,7 +73,7 @@ def load_config() -> Config:
         cfg.save()
         return cfg
     except Exception as e:
-        print(f"Ошибка загрузки конфигурации: {e}")
+        print(f"ошибка загрузки конфигурации: {e}")
         return Config()
 
 

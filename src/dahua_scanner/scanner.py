@@ -88,7 +88,6 @@ def emergency_save(
     save_folder = folder or _current_run_report_dir or (REPORTS_DIR / datetime.now().strftime("result-%Y%m%d-%H%M%S"))
     save_folder.mkdir(parents=True, exist_ok=True)
 
-    # 1. Запись в общий found_devices.txt с дедупликацией
     existing_lines = set()
     if FOUND_DEVICES_FILE.exists():
         try:
@@ -114,7 +113,6 @@ def emergency_save(
     except Exception as e:
         logging.error(f"failed emergency txt save: {e}")
 
-    # 2. Запись в found_devices.txt текущей сессии
     try:
         run_txt = save_folder / "found_devices.txt"
         with open(run_txt, "w", encoding="utf-8") as f:
