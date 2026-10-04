@@ -27,9 +27,9 @@
   Сканер и брутфорсер стандартных учётных данных для устройств Dahua.<br/>
   Интерактивный TUI · Снятие снимков · Уведомления в Telegram · Экспорт в SmartPSS
   <br/><br/>
-  <a href="https://github.com/kw33zixx/dahua-scanner/issues/new?labels=bug">🐛 Сообщить об ошибке</a>
+  <a href="https://github.com/p4lemoon/DH-SC4N/issues/new?labels=bug">🐛 Сообщить об ошибке</a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/kw33zixx/dahua-scanner/issues/new?labels=enhancement">💡 Предложить улучшение</a>
+  <a href="https://github.com/p4lemoon/DH-SC4N/issues/new?labels=enhancement">💡 Предложить улучшение</a>
 </p>
 </div>
 
@@ -94,8 +94,8 @@ irm https://astral.sh/uv/install.ps1 | iex
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 2. Клонировать репозиторий
-git clone https://github.com/p4lemoon/dahua-scanner.git
-cd dahua-scanner
+git clone https://github.com/p4lemoon/DH-SC4N.git
+cd DH-SC4N
 
 # 3. Установить зависимости (виртуальное окружение создаётся автоматически)
 uv sync
@@ -104,8 +104,8 @@ uv sync
 #### Вариант 2 — через `pip`
 
 ```sh
-git clone https://github.com/p4lemoon/dahua-scanner.git
-cd dahua-scanner
+git clone https://github.com/p4lemoon/DH-SC4N.git
+cd DH-SC4N
 
 python -m venv .venv
 
@@ -215,9 +215,9 @@ python main.py
 [python-url]: https://python.org
 [uv-shield]: https://img.shields.io/badge/uv-package%20manager-DE5FE9?style=for-the-badge&logo=astral&logoColor=white
 [uv-url]: https://docs.astral.sh/uv/
-[license-shield]: https://img.shields.io/github/license/kw33zixx/dahua-scanner?style=for-the-badge
-[license-url]: https://github.com/kw33zixx/dahua-scanner/blob/master/LICENSE
-[issues-shield]: https://img.shields.io/github/issues/kw33zixx/dahua-scanner?style=for-the-badge
-[issues-url]: https://github.com/kw33zixx/dahua-scanner/issues
-[stars-shield]: https://img.shields.io/github/stars/kw33zixx/dahua-scanner?style=for-the-badge
-[stars-url]: https://github.com/kw33zixx/dahua-scanner/stargazers
+[license-shield]: https://img.shields.io/github/license/p4lemoon/DH-SC4N?style=for-the-badge
+[license-url]: https://github.com/p4lemoon/DH-SC4N/blob/master/LICENSE
+[issues-shield]: https://img.shields.io/github/issues/p4lemoon/DH-SC4N?style=for-the-badge
+[issues-url]: https://github.com/p4lemoon/DH-SC4N/issues
+[stars-shield]: https://img.shields.io/github/stars/p4lemoon/DH-SC4N?style=for-the-badge
+[stars-url]: https://github.com/p4lemoon/DH-SC4N/stargazers
