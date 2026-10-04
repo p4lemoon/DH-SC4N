@@ -95,7 +95,7 @@ def show_value(key, kind) -> str:
         s = str(v)
         return s[:6] + "..." + s[-4:] if len(s) > 10 else "protected"
     if kind == "bool":
-        return "[green]да[/green]" if v else "[red]нет[/red]"
+        return "да" if v else "нет"
     return str(v) if v != "" else "<not set>"
 
 

@@ -18,7 +18,7 @@ def get_config_file() -> Path:
 
 @dataclass
 class Config:
-    tg_endpoint: str = "epic-scorpion-2212.p4lemoon.deno.net"
+    tg_endpoint: str = "api.telegram.org"
     bot_token: str = ""
     userid: str = ""
     send_tg: bool = True
