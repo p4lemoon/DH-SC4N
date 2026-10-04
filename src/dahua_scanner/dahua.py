@@ -71,7 +71,45 @@ request_interfaces = {
 
 HTTP_API_REQUESTS = [request_snapshot, request_text_name, request_vendor, request_text_config,request_type, request_serial, request_hardware, request_software, request_system, request_builddate, request_ptz_list, request_interfaces]
 
-HTTP_PORTS = [80, 8080, 81, 88, 8081, 82, 8000, 83, 9000, 8088, 8082, 8888, 8083, 8084, 9080, 9999, 84]
+HTTP_PORTS = [80, 8080, 8000, 81, 8888, 88, 8081, 82, 83, 84, 9000, 8088, 8082, 8083, 8084, 9080, 9999]
+
+DEVICE_CATEGORIES = {
+    'DH-HAC-HUM': 'Pinhole',
+    'DH-CA-UM': 'Pinhole',
+    'DH-HAC-HDBW': 'Mobile',
+    'DVR0404': 'ATM',
+    'DHI-ITL': 'Traffic',
+    'DH-MPTZ': 'Mobile PTZ',
+    'DH-PVR': 'PVR',
+    'UVSS': 'Vehicle',
+    'UAV': 'Drone',
+    'DH-M70': 'Multiservice Matrix',
+    'ITC': 'Parking System',
+    'DH-KVM0': 'KVM Switch',
+    'DH-PFS': 'Managed Switch',
+    'DH-KIT-HCVR': 'HD Surveillance System',
+    'DH-TPC': 'Thermal',
+    'DH-EVS': 'Video Storage',
+    'ARC': 'Alarm System',
+    'ARK': 'Access Control System',
+    'ASM': 'Access Control Module',
+    'VTH': 'Indoor Intercom',
+    'VTN': 'Door Intercom',
+    'VTO': 'Outdoor Intercom',
+    'DHI-NVR4104': 'Wi-Fi NVR',
+    'VTS': 'Home Operator',
+    'DH-EPS': 'PTZ System',
+    'DH-PTZ': 'PTZ System',
+    'DH-SD': 'PTZ System',
+    'DH-HAC': '1080p Camera',
+    'DH-NKB': 'Keyboard',
+    'DH-ESS': 'Storage',
+    'DH-NVR': 'NVR',
+    'DHI-NVR': 'NVR',
+    'NVR': 'NVR',
+    'DVR': 'DVR',
+    'IPC': 'IP Camera',
+}
 
 logger = logging.getLogger("dahua")
 
@@ -326,3 +364,65 @@ class DahuaController:
         #if 'PTZ' in cam_summary or 'Wi-Fi' in cam_summary:
         #    post_str("%s\n%s:%s" % (cam_summary, cam['Login'], cam['Password']))
         return data
+
+    @classmethod
+    def get_device_category(cls, model_str: str) -> str:
+        """Определяет категорию устройства по префиксу модели."""
+        if not model_str:
+            return ""
+        for prefix, cat in DEVICE_CATEGORIES.items():
+            if prefix in model_str:
+                return cat
+        return ""
+
+    @classmethod
+    def get_model(cls, ip: str, login: str, password: str, timeout: float = 2.0) -> str:
+        """
+        Быстро запрашивает модель камеры Dahua через HTTP CGI.
+        Проверяет наиболее частые HTTP-порты, определяет auth (Digest/Basic)
+        и возвращает название модели (например, 'DH-IPC-HFW4431R-Z (IP Camera)').
+        """
+        for port in HTTP_PORTS[:10]:
+            try:
+                with socket.create_connection((ip, port), timeout=0.5):
+                    pass
+            except (socket.timeout, OSError):
+                continue
+
+            try:
+                url_type = f"http://{ip}:{port}/cgi-bin/magicBox.cgi?action=getDeviceType"
+                with requests.Session() as session:
+                    resp = session.get(url_type, timeout=timeout)
+                    auth = None
+                    if resp.status_code == 401:
+                        hdr = resp.headers.get("WWW-Authenticate", "")
+                        if "Digest" in hdr:
+                            auth = HTTPDigestAuth(login, password)
+                        else:
+                            auth = HTTPBasicAuth(login, password)
+                        resp = session.get(url_type, auth=auth, timeout=timeout)
+
+                    model = ""
+                    if resp.status_code == 200:
+                        for line in resp.text.splitlines():
+                            if line.startswith("type="):
+                                model = line.split("=", 1)[1].strip()
+                                break
+
+                    if not model or model == "-":
+                        url_sys = f"http://{ip}:{port}/cgi-bin/magicBox.cgi?action=getSystemInfo"
+                        resp_sys = session.get(url_sys, auth=auth, timeout=timeout)
+                        if resp_sys.status_code == 200:
+                            for line in resp_sys.text.splitlines():
+                                if line.startswith("deviceType="):
+                                    model = line.split("=", 1)[1].strip()
+                                    break
+
+                    if model and model != "-":
+                        category = cls.get_device_category(model)
+                        return f"{model} ({category})" if category else model
+            except Exception as e:
+                logger.debug(f"HTTP model probe failed on {ip}:{port}: {e}")
+                continue
+
+        return ""

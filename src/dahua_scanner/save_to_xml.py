@@ -27,13 +27,17 @@ def save_xml(results: list, max_xml_entries: int = 64, reports_folder: str = "re
             port = str(host[1])
             user = str(host[2])
             password = str(host[3])
+            model = str(host[4]) if len(host) > 4 and host[4] else ""
 
             device = ElTree.SubElement(dev_list, 'Device')
-            device.set('title', f"{ip}_{user}:{password}")
+            title = f"{ip}_{user}:{password}" + (f" [{model}]" if model else "")
+            device.set('title', title)
             device.set('ip', ip)
             device.set('port', port)
             device.set('user', user)
             device.set('password', password)
+            if model:
+                device.set('model', model)
 
         filename = "save.xml" if single_file else f"save_part_{idx}.xml"
         file_path = folder / filename
