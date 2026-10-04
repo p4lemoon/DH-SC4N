@@ -1,0 +1,25 @@
+[project]
+name = "DH-SC4N"
+version = "1.0"
+description = "dahua CCTV scanner, bruteforcer, and snapshot grabber with support for notifications via telegram"
+readme = "README.md"
+authors = [
+    { name = "kw33zixx", email = "177550811+kw33zixx@users.noreply.github.com" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "prompt-toolkit>=3.0.52",
+    "requests>=2.32.5",
+    "rich>=15.0.0",
+    "tqdm>=4.70.1",
+]
+
+[project.scripts]
+dahua-scanner = "dahua_scanner:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "dahua_scanner"

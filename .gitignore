@@ -1,0 +1,33 @@
+# Python bytecode and build artifacts
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Dahua scanner runtime data & output
+dahua_logs/
+snapshots/
+reports/
+found_devices.txt
+*.log
+*.xml
+input.txt
+
+# OS-specific
+.DS_Store
+Thumbs.db
+desktop.ini

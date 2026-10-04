@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import xml.etree.ElementTree as ElTree
+from pathlib import Path
+
+
+def save_xml(results: list, max_xml_entries: int = 64, reports_folder: str = "reports") -> list[str]:
+    if not results:
+        return []
+
+    folder = Path(reports_folder)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    max_entries = max(1, int(max_xml_entries))
+    chunks = [results[i:i + max_entries] for i in range(0, len(results), max_entries)]
+    single_file = len(chunks) == 1
+
+    saved_files: list[str] = []
+
+    for idx, part in enumerate(chunks, start=1):
+        root = ElTree.Element('Organization')
+        dev_list = ElTree.SubElement(root, 'Department')
+        dev_list.set('name', 'root')
+
+        for host in part:
+            ip = str(host[0])
+            port = str(host[1])
+            user = str(host[2])
+            password = str(host[3])
+
+            device = ElTree.SubElement(dev_list, 'Device')
+            device.set('title', f"{ip}_{user}:{password}")
+            device.set('ip', ip)
+            device.set('port', port)
+            device.set('user', user)
+            device.set('password', password)
+
+        filename = "save.xml" if single_file else f"save_part_{idx}.xml"
+        file_path = folder / filename
+
+        tree = ElTree.ElementTree(root)
+        if hasattr(ElTree, 'indent'):
+            ElTree.indent(tree, space="  ")
+
+        with open(file_path, "wb") as f:
+            tree.write(f, encoding="utf-8", xml_declaration=True)
+
+        saved_files.append(str(file_path))
+
+    return saved_files
